@@ -81,11 +81,171 @@ router.post('/questionnaires/:questionnaireId/submit', async (ctx) => {
     });
 
     // 返回结果
-    ctx.body = { success: true, results: orderedResults };
+    ctx.body = { success: true, results: orderedResults, responseId };
   } catch (err) {
     console.error(err);
     ctx.status = 500;
     ctx.body = { error: 'Internal Server Error' };
   }
 });
+
+router.get('/consultation/:id', async (ctx, next) => {
+  const consultationId = ctx.params.id;
+
+  try {
+    const consultationQuery = ctx.db
+      .select('*')
+      .from('zxquestionnaire')
+      .where({ id: consultationId });
+
+    const consultation = await consultationQuery;
+
+    if (!consultation.length) {
+      ctx.body = {
+        code: 404,
+        message: '咨询单未找到'
+      };
+      return;
+    }
+
+    const questionnaireId = consultation[0].id;
+
+    const questionsQuery = await ctx.db
+      .select('zq.id as question_id', 'zq.question_text', 'zq.type', 'zqo.option_label', 'zqo.option_value')
+      .from('zxquestions as zq')
+      .leftJoin('zxquestion_options as zqo', 'zq.id', 'zqo.question_id')
+      .where({ questionnaire_id: questionnaireId });
+
+    // 将问题和选项组织成合理的结构
+    const questionsMap = {};
+
+    questionsQuery.forEach(question => {
+      if (!questionsMap[question.question_id]) {
+        questionsMap[question.question_id] = {
+          question_id: question.question_id,
+          question_text: question.question_text,
+          type: question.type,
+          options: []
+        };
+      }
+      if (question.option_label && question.option_value) {
+        questionsMap[question.question_id].options.push({
+          option_label: question.option_label,
+          option_value: question.option_value
+        });
+      }
+    });
+
+    const responseData = {
+      consultation: consultation[0],
+      questions: Object.values(questionsMap)
+    };
+
+    ctx.body = {
+      code: 200,
+      data: responseData
+    };
+  } catch (error) {
+    console.error(error);
+    ctx.body = {
+      code: 500,
+      message: error.message
+    };
+  }
+});
+
+
+// POST /submit_consultation
+router.post('/submit_consultation', async (ctx) => {
+  const { answers, responseId } = ctx.request.body;
+
+  // 验证请求体
+  if (!answers || !responseId) {
+    ctx.status = 400;
+    ctx.body = { message: '缺少必要的参数：answers 或 responseId' };
+    return;
+  }
+
+  try {
+    // 获取用户ID（假设通过身份验证中间件设置在 ctx.state.user.userId）
+    const userId = ctx.state.user.userId;
+
+    // 获取与 responseId 关联的响应记录
+    const response = await ctx.db('responses').where({ id: responseId }).first();
+
+    if (!response) {
+      ctx.status = 404;
+      ctx.body = { message: 'Response not found' };
+      return;
+    }
+
+    const questionnaireId = 1;
+
+    // 确认 questionnaire_id 存在于 zxquestionnaire 表中
+    const questionnaire = await ctx.db('zxquestionnaire').where({ id: questionnaireId }).first();
+
+    if (!questionnaire) {
+      ctx.status = 400;
+      ctx.body = { message: `Questionnaire with id ${questionnaireId} does not exist` };
+      return;
+    }
+
+    // 准备插入 zxuser_answers 的数据
+    const answerInserts = [];
+
+    for (const [questionId, answerValue] of Object.entries(answers)) {
+      if (Array.isArray(answerValue)) {
+        // 多选题，每个选项作为单独的记录插入
+        answerValue.forEach((value) => {
+          // 跳过空值
+          if (value === null || value === undefined || value === '') return;
+
+          answerInserts.push({
+            user_id: userId,
+            questionnaire_id: questionnaireId,
+            question_id: parseInt(questionId, 10),
+            answer_value: value,
+            response_id: responseId,
+            created_at: new Date(),
+            updated_at: new Date(),
+          });
+        });
+      } else {
+        // 单选题或输入题，单独插入
+        // 跳过空值
+        if (answerValue === null || answerValue === undefined || answerValue === '') continue;
+
+        answerInserts.push({
+          user_id: userId,
+          questionnaire_id: questionnaireId,
+          question_id: parseInt(questionId, 10),
+          answer_value: answerValue,
+          response_id: responseId,
+          created_at: new Date(),
+          updated_at: new Date(),
+        });
+      }
+    }
+
+    if (answerInserts.length === 0) {
+      ctx.status = 400;
+      ctx.body = { message: '没有有效的答案可提交' };
+      return;
+    }
+
+    // 使用事务批量插入答案
+    await ctx.db.transaction(async (trx) => {
+      await trx('zxuser_answers').insert(answerInserts);
+    });
+
+    ctx.status = 200;
+    ctx.body = { code:200, message: 'Answers submitted successfully' };
+  } catch (error) {
+    console.error('Error submitting answers:', error);
+    ctx.status = 500;
+    ctx.body = { message: 'Internal server error' };
+  }
+});
+
+
 module.exports = router

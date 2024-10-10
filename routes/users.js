@@ -1,7 +1,7 @@
 const router = require('koa-router')()
 const axios = require('axios')
-const WECHAT_APPID = 'wx4e22a2efdf4efb81';  // 替换为你的小程序 AppID
-const WECHAT_SECRET = '27b2691557cef0804035dd574c94bcb7'; // 替换为你的小程序 AppSecret
+const WECHAT_APPID = 'wx4a33f149e1c0fec7';  // 替换为你的小程序 AppID
+const WECHAT_SECRET = 'a7aeb8f9194a0f9e83d79c72a043d685'; // 替换为你的小程序 AppSecret
 const jsonwebtoken = require('jsonwebtoken');
 // JWT secret
 const secret = `faU5Xpb~qxcp6Zv68Q

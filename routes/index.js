@@ -34,7 +34,6 @@ router.post('/questionnaires/:questionnaireId/submit', async (ctx) => {
     });
 
     // 插入答案
-    // 使用 Object.entries 遍历对象
     const answerInserts = Object.entries(answers).map(([questionId, selectedOptionId]) => ({
       response_id: responseId,
       question_id: parseInt(questionId),  // 将 questionId 转换为整数
@@ -80,6 +79,24 @@ router.post('/questionnaires/:questionnaireId/submit', async (ctx) => {
       }
     });
 
+    // 将计算结果插入数据库
+    const resultInserts = [];
+    for (const moduleName in results) {
+      for (const dimensionName in results[moduleName]) {
+        resultInserts.push({
+          response_id: responseId,
+          module_name: moduleName,
+          dimension_name: dimensionName,
+          average_score: results[moduleName][dimensionName],
+        });
+      }
+    }
+
+    // 批量插入计算结果
+    if (resultInserts.length > 0) {
+      await ctx.db('results').insert(resultInserts);
+    }
+
     // 返回结果
     ctx.body = { success: true, results: orderedResults, responseId };
   } catch (err) {
@@ -88,6 +105,7 @@ router.post('/questionnaires/:questionnaireId/submit', async (ctx) => {
     ctx.body = { error: 'Internal Server Error' };
   }
 });
+
 
 router.get('/consultation/:id', async (ctx, next) => {
   const consultationId = ctx.params.id;
@@ -111,7 +129,7 @@ router.get('/consultation/:id', async (ctx, next) => {
     const questionnaireId = consultation[0].id;
 
     const questionsQuery = await ctx.db
-      .select('zq.id as question_id', 'zq.question_text', 'zq.type', 'zqo.option_label', 'zqo.option_value')
+      .select('zq.id as question_id', 'zq.question_text', 'zq.type', 'zqo.option_label', 'zqo.option_value', 'zq.is_required')
       .from('zxquestions as zq')
       .leftJoin('zxquestion_options as zqo', 'zq.id', 'zqo.question_id')
       .where({ questionnaire_id: questionnaireId });
@@ -125,7 +143,8 @@ router.get('/consultation/:id', async (ctx, next) => {
           question_id: question.question_id,
           question_text: question.question_text,
           type: question.type,
-          options: []
+          options: [],
+          required: question.is_required
         };
       }
       if (question.option_label && question.option_value) {
